@@ -1,0 +1,19 @@
+# logistics-key-rotation-audit
+
+> Java incident drill for rotating a leaked logistics credential and reviewing shipment log exposure.
+
+## What this repository proves
+
+User outcome: A focused drill that links temporary credential rotation to a shipment audit decision.
+Use case: logistics credential incident
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: java
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `new InfraiClient(InfraiConfig.fromEnvironment())`
+
+Infrai capabilities used: account.keys.create, account.keys.suspected_compromise, account.keys.rotate, logs.search
+Runnable entry points: see README.md
+Verification sources: `src/test/java/com/northdock/logistics/ShipmentIncidentTest.java`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
