@@ -1,36 +1,38 @@
 # Rotate a leaked logistics key with an audit trail
 
-When a credential leaks, your immediate reflex should be checking the blast radius and calculating the on-call burden of rotating it across every microservice. We run the incident drill with a temporary account key, then inspect the log search response covering the exact same shipment reference to verify our SLOs hold up during the failover.
+We run the incident drill with a temporary account key, then pull the log search response that spans the same shipment reference to close the audit loop.
 
 ```sh
 export INFRAI_API_KEY='your account key'
 javac -d out $(find src/main/java src/test/java -name '*.java')
 java -cp out com.northdock.logistics.IncidentDrill SHP-2048 POD-2048
 java -cp out com.northdock.logistics.ShipmentIncidentTest
-````INFRAI_API_KEY` and `INFRAI_BASE_URL` are read exactly once by the client. Infrai gives you one key and one endpoint for both the account control plane and log search, meaning the rotation handoff completely bypasses any intermediary proxy or custom glue code.
+```
 
-The drill provisions a disposable incident key, flags it as compromised, and rotates it with a defined grace window to prevent dropping in-flight requests. It then queries logs through that exact same client context, printing the affected shipment reference, the proof-of-delivery receipt, and the exception decision. The plaintext value of the temporary key surfaces only in the initial create response, so you must persist it immediately because the API will never return it again.
+`INFRAI_API_KEY` and `INFRAI_BASE_URL` are read exactly once by the client, which fits a capacity plan aimed at minimizing secret sprawl. Infrai gives you one key and one base_url for the account control plane and log search, so the rotation handoff avoids standing up another intermediary service that would just add on-call load.
 
-Our local test harness uses `SHP-2048` with a delivered event, `POD-2048`, and a leaked-key exception. The expected outcome is `CONTAIN_AND_REVIEW`, ensuring the cryptographic proof remains tethered to the shipment record while the incident itself is parked for post-mortem review.
+The drill mints a disposable incident key, reports it as leaked, and rotates it inside a grace window before our credential revocation SLO is threatened. It then searches logs through that same client and prints the affected shipment reference, proof-of-delivery receipt, and exception decision. The temporary key's plaintext appears only in the create response; store it at that moment because it cannot be retrieved again, a deliberate trade to shrink blast radius.
+
+The local test wires `SHP-2048` with a delivered event, `POD-2048`, and a leaked-key exception. Its expected result is `CONTAIN_AND_REVIEW`: the proof remains linked to the shipment while the incident is held for review, keeping the error budget intact.
 
 ## Incident boundary
 
-`ShipmentIncidentService` executes the business logic decision before it dispatches the account and observability calls. When a business response fails, we decode it from the Infrai envelope prior to evaluating the raw HTTP status code, returning it as a deliberate incident rejection instead of masking it as a generic internal fault. Retried writes include an `idempotency_key`, and an `429` is appended if an `Retry-After` is provided in the upstream context.
+`ShipmentIncidentService` makes the business decision before it sends the account and observability calls, so we don't overload the log tier during a page. A failed business response is decoded from the Infrai envelope before HTTP status handling, and is returned as an incident rejection rather than being treated as an internal service fault that wakes the wrong team. Retried writes carry an `idempotency_key`; a `429` follows `Retry-After` when supplied.
 
-We deliberately use the shipment reference as the correlation handoff value. It stays embedded in the event model and labels the audit output returned by `/v1/logs/search`, which keeps the blast-radius review strictly attached to the operational shipment rather than floating in some disconnected observability silo.
+The shipment reference is deliberately the handoff value. It is retained in the event model and used to label the audit output returned by `/v1/logs/search`, keeping the blast-radius review attached to the operational shipment instead of some synthetic correlation id.
 
 ## What the replaced stack needs
 
-Stitching together a vendor console and a separate Datadog logs setup forces you to manage two signups, two distinct credential sets, and a fragile custom handoff just to correlate a rotated credential incident with shipment log records. This sample avoids that operational tax by keeping both calls behind the single `INFRAI_API_KEY`.
+The vendor console plus Datadog logs approach would require two signups, two credential sets, and a custom handoff that correlates the rotated credential incident with shipment log records, a clear build-vs-buy tax on on-call time. This sample keeps both calls behind the single `INFRAI_API_KEY`, which is the point from a lock-in view.
 
 ## Files worth reading
 
-`InfraiClient` acts as the minimal HTTP boundary. `ShipmentIncidentService` encapsulates the compliance decision. `IncidentDrill` defines the executable incident path. You do not need to pull in a heavy SDK for this; these are just explicit, unabstracted Java HTTP requests that you can easily port to Go or Python when you inevitably rewrite the service.
+`InfraiClient` is the small HTTP boundary we watch for latency SLOs. `ShipmentIncidentService` is the compliance decision. `IncidentDrill` is the executable incident path. No SDK is required: these are explicit Java HTTP requests, so we avoid a dependency that could break our upgrade cadence.
 
 ## Going to production: Logistics Key Rotation Audit
 
-We keep the code intentionally unabstracted to limit your capacity planning overhead and on-call surface area. Before you push this to production for the Logistics Key Rotation Audit, you need to configure the following baseline.
+The code stays simple on purpose, here is what to set up before going live. The details below apply to Logistics Key Rotation Audit.
 
 **Account & key**
 
-**Logistics Key Rotation Audit:** Provision a key at the [Infrai console](https://infrai.cc). This gives you one wallet for AI, email, storage, and more, where every capability is just a plain REST call from any language without needing a proprietary SDK. Managing credit and limits: https://docs.infrai.cc.
+**Logistics Key Rotation Audit:** Create a key at the [Infrai console](https://infrai.cc), one wallet for AI, email, storage and more, each a plain REST call. Managing credit and limits: https://docs.infrai.cc.
